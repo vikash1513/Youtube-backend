@@ -18,7 +18,7 @@ const UserSchema =new Schema({
         unique:true,
         trim:true,
     },
-    fullname:{
+    fullName:{
         type:String,
         required:true,
         trim:true,
@@ -28,8 +28,8 @@ const UserSchema =new Schema({
         type:String,
         required:true
     },
-    cover_img:{
-        type:String,
+    coverImage:{
+        type:String
     },
     watch_history:[
         {
@@ -48,7 +48,7 @@ const UserSchema =new Schema({
 
 UserSchema.pre("save",async function(next){
     if(!this.isModified("password"))return next()
-    this.password=bcrypt.hash(this.password,10)
+    this.password = await bcrypt.hash(this.password,10)
     next
 })
 
@@ -61,7 +61,7 @@ UserSchema.methods.generateAccessToken=function(){
         _id:this._id,
         email:this.email,
         username:this.username,
-        fullname:this.fullname
+        fullName:this.fullName
     },
     process.env.ACCESS_TOKEN_SECRET,
     {
@@ -80,4 +80,4 @@ UserSchema.methods.generateRefreshToken=function(){
     )
 }
 
-export const User = mongoose.model("User","UserSchema")
+export const User = mongoose.model("User",UserSchema)
