@@ -60,7 +60,7 @@ const getVideoComments = asyncHandler(async(req,res)=>{
                         },
                         {
                             $group:{
-                                _id:liked,
+                                _id:"liked",
                                 owners:{$push:"$likedBy"},
                             },
                         },
