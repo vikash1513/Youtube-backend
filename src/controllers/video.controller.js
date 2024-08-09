@@ -10,42 +10,43 @@ const getAllVideos = asyncHandler(async (req, res) => {
     const { page = 1, limit = 10, query, sortBy, sortType, userId } = req.query
     if(!userId)
         throw new ApiError(400,"UserId required")
-    if(!mongoose.Schema.Types.ObjectId.isValidObjectId(userID))
+    if(!mongoose.Schema.Types.ObjectId.isValidObjectId(userId))
         throw new ApiError(400,"Invalid UserId")
 
     const user = await User.findById(userId)
 
-    const video = await Video.Aggregate([
+    const video = await Video.aggregate([
+
         {
             $match:{
-                user:mongoose.Schema.Types.ObjectId(userId)
+                user:mongoose.Schema.Types.ObjectId(userId),
             },
         },
         {
             $sort:{
-                sortType:sortBy
+                [sortBy]: sortType === 'desc' ? -1 : 1
             },
         },
         {
-            $lookup:{
-                from:"likes",
-                localField:"_id",
-                foreignField:"video",
-                as:"likes",
-                pipeline:[
-                    {
-                        $match:{
-                            liked:true
-                        },
+           $lookup:{
+            from:"likes",
+            localField:"_id",
+            foreignField:"video",
+            as:"likes",
+            pipeline:[
+                {
+                    $match:{
+                        liked:true
                     },
-                    {
-                        $group:{
-                            _id:"liked",
-                            owners:{$push:"$likedBy"}
-                        },
+                },
+                {
+                    $group:{
+                        _id:"liked",
+                        owners:{$push:"$likedBy"}
                     },
-                ],
-            },
+                },
+            ],
+           } ,
         },
         {
             $lookup:{
@@ -61,7 +62,8 @@ const getAllVideos = asyncHandler(async (req, res) => {
                     },
                     {
                         $group:{
-                            _id:"liked",
+
+                            _id:"dislikes",
                             owners:{$push:"$likedBy"}
                         },
                     },
@@ -72,23 +74,15 @@ const getAllVideos = asyncHandler(async (req, res) => {
             $addFields:{
                 likes:{
                     $cond:{
-                        if:{
-                            $gt:[{$size:"$likes"},0],
-                        },
-                        then:{
-                            $first:"$likes.owners",
-                        },
+                        if:{$gt:[{$size:"likes"},0]},
+                        then:{$first:"$likes.owners"},
                         else:[]
                     },
                 },
                 dislikes:{
                     $cond:{
-                        if:{
-                            $gt:[{$size:"$dislikes"},0],
-                        },
-                        then:{
-                            $first:"$dislikes.owners",
-                        },
+                        if:{$gt:[{$size:"$dislikes"},0]},
+                        then:{$first:"$dislikes.owners"},
                         else:[]
                     },
                 },
@@ -121,47 +115,39 @@ const getAllVideos = asyncHandler(async (req, res) => {
                 owner:1,
                 isOwner:{
                     $cond:{
-                        if:{
-                            $eq:[req.user?._id,"$owner._id"]
-                        },
+                        if:{$eq:[req.user?._id,"$owner._id"]},
                         then:true,
                         else:false
                     },
                 },
                 likesCount:{
-                    $size:"$likes"
+                    $size:"$likedBy"
                 },
-                disLikesCount:{
+                dislikesCount:{
                     $size:"$dislikes"
                 },
-                isLiked:{
-                    $cond:{
-                        if:{
-                            $in:[req.user?._id,"$likes"]
-                        },
-                        then:true,
-                        else:false
+                isLiked: {
+                    $cond: {
+                        if: { $in: [req.user?._id, "$likes"] },
+                        then: true,
+                        else: false
                     },
                 },
-                isDisliked:{
-                    $cond:{
-                        if:{
-                            $in:[req.user?._id,"dislikes"]
-                        },
-                        then:true,
-                        else:false
+                isDisliked: {
+                    $cond: {
+                        if: { $in: [req.user?._id, "$dislikes"] },
+                        then: true,
+                        else: false
                     },
                 },
-                isLikedByVideoOwner:{
-                    $cond:{
-                        if:{
-                            $in:[video.owner,"$likes"]
-                        },
-                        then:true,
-                        else:false
+                isLikedByVideoOwner: {
+                    $cond: {
+                        if: { $in: ["$owner._id", "$likes"] },
+                        then: true,
+                        else: false
                     }
-                }
-            }
+                },
+            },
         }
     ])
 
@@ -191,7 +177,7 @@ const publishAVideo = asyncHandler(async (req, res) => {
         thumbnailLocalFilePath = req.files.thumbnail[0].path;
     }
     if (!thumbnailLocalFilePath)
-        throw new ApiError(400, "Thumbnail File Must be Required");
+        throw new ApiError(400, "Thumbnail File Required");
 
     const videoFile = await uploadOnCloudinary(videoLocalPath)
     if(!videoFile.url)
@@ -223,11 +209,19 @@ const publishAVideo = asyncHandler(async (req, res) => {
 
 const getVideoById = asyncHandler(async (req, res) => {
     const { videoId } = req.params
+    if (!isValidObjectId(videoId)) {
+        throw new ApiError(400, "Invalid VideoID.");
+    }
+    const responce = await Video.findById(videoId);
+
+    if (!responce) {
+        throw new ApiError(400, "Failed to get Video details.");
+    }
     return res.status(200)
     .json(
-        new ApiResponse(200,req.video,"Video fetched successfully")
+        new ApiResponse(200,response,"Video fetched successfully")
     )
-})
+}) 
 
 const updateVideo = asyncHandler(async (req, res) => {
     const { videoId } = req.params
@@ -245,12 +239,14 @@ const updateVideo = asyncHandler(async (req, res) => {
     if(!thumbnailFile)
         throw new ApiError(400,"error while uploading thumbnail")
 
-    const videoFile = Video.findByIdAndUpdate(
-        req.video?._id,
+    const videoFile = await Video.findByIdAndUpdate(
+        videoId,
         {
-           title,
-           description,
-           thumbnail:thumbnailFile 
+           $set:{
+            title,
+            description,
+            thumbnail:thumbnailFile 
+            }
         },
         {new:true}
     )
@@ -274,7 +270,7 @@ const deleteVideo = asyncHandler(async (req, res) => {
     const video = await Video.findByIdAndDelete(videoId)
     if(!video)
         throw new ApiError(500,"Error while deleteing video")
-    const deletedlikes = await WakeLockSentinel.deleteMany(
+    const deletedlikes = await Like.deleteMany(
         {video:mongoose.Schema.Types.ObjectId(videoId)}
     )
     return res.status(200)
